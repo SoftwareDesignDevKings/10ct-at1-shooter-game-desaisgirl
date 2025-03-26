@@ -8,9 +8,9 @@ import os
 
 WIDTH = 800
 HEIGHT = 600
-FPS = 120
+FPS = 60
 
-PLAYER_SPEED = 3
+PLAYER_SPEED = 2
 DEFAULT_ENEMY_SPEED = 1
 
 SPAWN_MARGIN = 50
@@ -63,7 +63,6 @@ def load_assets():
         "orc":    load_frames("orc",    4, scale_factor=ENEMY_SCALE_FACTOR),
         "undead": load_frames("undead", 4, scale_factor=ENEMY_SCALE_FACTOR),
         "demon":  load_frames("demon",  4, scale_factor=ENEMY_SCALE_FACTOR),
-        
     }
 
     # Player

@@ -18,6 +18,11 @@ class Game:
  
         self.assets = app.load_assets()
        
+        # Load sound effects
+        self.shoot_sound = pygame.mixer.Sound("assets/shoot.wav")
+        self.coin_sound = pygame.mixer.Sound("assets/coin.wav")
+        self.game_over_sound = pygame.mixer.Sound("assets/game_over.wav")
+        
         font_path = os.path.join("assets", "PressStart2P.ttf")
         self.font_small = pygame.font.Font(font_path, 18)
         self.font_large = pygame.font.Font(font_path, 32)
@@ -28,7 +33,7 @@ class Game:
        
         self.running = True
         self.game_over = False
- 
+        self.bullet_colour = (255, 255, 255)  # Default bullet color (white)
         self.enemies = []
         self.enemy_spawn_timer = 0
         self.enemy_spawn_interval = 60
@@ -40,6 +45,14 @@ class Game:
        
         self.in_level_up_menu = False
         self.upgrade_options = []
+        
+        #for shake screen
+        self.shake_duration = 0  # How long the screen shake lasts
+        self.shake_intensity = 0  # How strong the shake is
+        #swoooshhh
+        self.swoosh_sound = pygame.mixer.Sound("assets/swoosh.wav")  # Load swoosh sound
+
+        self.kill_count = 0  # Track the number of enemies killed
  
     def reset_game(self):
         self.player = Player(app.WIDTH // 2, app.HEIGHT // 2, self.assets)
@@ -76,33 +89,49 @@ class Game:
  
         pygame.quit()
 
- 
     def handle_events(self):
         for event in pygame.event.get():
+            # Handle quitting the game
             if event.type == pygame.QUIT:
                 self.running = False
+
+            # Handle key presses
             elif event.type == pygame.KEYDOWN:
+                # Game Over state
                 if self.game_over:
-                    if event.key == pygame.K_r:
+                    if event.key == pygame.K_r:  # Restart the game
                         self.reset_game()
-                    elif event.key == pygame.K_ESCAPE:
+                    elif event.key == pygame.K_ESCAPE:  # Quit the game
                         self.running = False
+
+                # Level-up menu
                 elif self.in_level_up_menu:
-                    if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
-                        index = event.key - pygame.K_1  # 0, 1, 2
+                    if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:  # Handle upgrade selection
+                        index = event.key - pygame.K_1  # Map K_1, K_2, K_3 to indices 0, 1, 2
                         if 0 <= index < len(self.upgrade_options):
                             upgrade = self.upgrade_options[index]
+                            print(f"Applying upgrade: {upgrade}")  # Debug
                             self.apply_upgrade(self.player, upgrade)
-                            self.in_level_up_menu = False
-                else:
-                    if event.key == pygame.K_SPACE:
+                            self.in_level_up_menu = False  # Exit level-up menu
+
+                # Normal gameplay
+                elif not self.game_over:
+                    if event.key == pygame.K_q and self.player.dash_cooldown == 0:  # Dash with Q
+                        self.player.start_dash()
+                        self.swoosh_sound.play()  # Play swoosh sound
+                    elif event.key == pygame.K_SPACE:  # Shoot with SPACE
+                        print("Spacebar pressed!")  # Debug
                         nearest_enemy = self.find_nearest_enemy()
                         if nearest_enemy:
+                            print("Nearest enemy found!")  # Debug
                             self.player.shoot_toward_enemy(nearest_enemy)
+                            self.shoot_sound.play()  # Play shooting sound
+
+            # Handle mouse clicks
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left mouse button
+                    print("Left mouse button clicked!")  # Debug
                     self.player.shoot_toward_mouse(event.pos)
-
     def update(self):
         self.player.handle_input()
         self.player.update()
@@ -115,30 +144,40 @@ class Game:
         self.check_player_coin_collisions()
  
         if self.player.health <= 0:
+            if not self.game_over:  # Ensure the sound plays only once
+                self.game_over_sound.play()
             self.game_over = True
             return
         self.spawn_enemies()
         self.check_for_level_up()
  
     def draw(self):
-        self.screen.blit(self.background, (0, 0))
+            # Apply screen shake offset
+        shake_x = shake_y = 0
+        if self.shake_duration > 0:
+            shake_x = random.randint(-self.shake_intensity, self.shake_intensity)
+            shake_y = random.randint(-self.shake_intensity, self.shake_intensity)
+            self.shake_duration -= 1  # Decrease shake duration
+
+        # Draw everything with the shake offset
+        self.screen.blit(self.background, (shake_x, shake_y))
 
         for coin in self.coins:
             coin.draw(self.screen)
-            
+
         if not self.game_over:
             self.player.draw(self.screen)
- 
+
         for enemy in self.enemies:
             enemy.draw(self.screen)
- 
+
         hp = max(0, min(self.player.health, 5))
         health_img = self.assets["health"][hp]
         self.screen.blit(health_img, (10, 10))
- 
+
         xp_text_surf = self.font_small.render(f"XP: {self.player.xp}", True, (255, 255, 255))
         self.screen.blit(xp_text_surf, (10, 70))
-        
+
         next_level_xp = self.player.level * self.player.level * 5
         xp_to_next = max(0, next_level_xp - self.player.xp)
         xp_next_surf = self.font_small.render(f"Next Lvl XP: {xp_to_next}", True, (255, 255, 255))
@@ -149,7 +188,14 @@ class Game:
 
         if self.in_level_up_menu:
             self.draw_upgrade_menu()
- 
+
+        # Display dash cooldown
+        if self.player.dash_cooldown > 0:
+            cooldown_text = f"Dash Cooldown: {self.player.dash_cooldown // app.FPS}s"
+        else:
+            cooldown_text = "Dash Ready!"
+        cooldown_surf = self.font_small.render(cooldown_text, True, (255, 255, 255))
+        self.screen.blit(cooldown_surf, (10, 160))
         pygame.display.flip()
  
     def spawn_enemies(self):
@@ -188,7 +234,11 @@ class Game:
             px, py = self.player.x, self.player.y
             for enemy in self.enemies:
                 enemy.set_knockback(px, py, app.PUSHBACK_DISTANCE)
- 
+            
+             # Trigger screen shake
+            self.shake_duration = 15  # Shake for 10 frames
+            self.shake_intensity = 10  # Shake intensity
+    
     def draw_game_over_screen(self):
         #Dark Overlay
         overlay = pygame.Surface((app.WIDTH, app.HEIGHT), pygame.SRCALPHA)
@@ -207,6 +257,7 @@ class Game:
  
     def find_nearest_enemy(self):
         if not self.enemies:
+            print("No enemies found!")  # Debug
             return None
         nearest = None
         min_dist = float('inf')
@@ -216,20 +267,28 @@ class Game:
             if dist < min_dist:
                 min_dist = dist
                 nearest = enemy
+        print(f"Nearest enemy found at ({nearest.x}, {nearest.y})")  # Debug
         return nearest
    
     def check_bullet_enemy_collisions(self):
-        bullets_to_remove = []
+        bullets_to_remove = []  # Temporary list to track bullets to remove
         for bullet in self.player.bullets:
             for enemy in self.enemies:
                 if bullet.rect.colliderect(enemy.rect):
-                    if bullet not in bullets_to_remove:
+                    if bullet not in bullets_to_remove:  # Avoid duplicate removals
                         bullets_to_remove.append(bullet)
-                    self.player.bullets.remove(bullet)
-                    new_coin = Coin(enemy.x, enemy.y)
+                    # Create a new coin at a random position
+                    new_coin = Coin(random.randint(0, app.WIDTH - 32), random.randint(0, app.HEIGHT - 32))
                     self.coins.append(new_coin)
                     self.enemies.remove(enemy)
-                    
+                    self.kill_count += 1  # Increment kill count
+                    print(f"Enemies killed: {self.kill_count}")  # Debug
+
+        # Remove bullets after the loop
+        for bullet in bullets_to_remove:
+            if bullet in self.player.bullets:  # Ensure the bullet is still in the list
+                self.player.bullets.remove(bullet)
+                
     def start_stopwatch(self):
         self.start_time = pygame.time.get_ticks()
 
@@ -250,6 +309,7 @@ class Game:
         for coin in self.coins:
             if coin.rect.colliderect(self.player.rect):
                 coins_collected.append(coin)
+                self.coin_sound.play() # Play coin sound
                 # Calculate XP ltiplier based on the number of coins collected
                 coin_count = len(coins_collected)
                 if coin_count >= 100:
@@ -265,21 +325,24 @@ class Game:
                 
     def pick_random_upgrades(self, num):
         possible_upgrades = [
-        {"name": "Bigger Bullet",  "desc": "Bullet size +5"},
-        {"name": "Faster Bullet",  "desc": "Bullet speed +2"},
-        {"name": "Extra Bullet",   "desc": "Fire additional bullet"},
-        {"name": "Shorter Cooldown", "desc": "Shoot more frequently"},
+            {"name": "Bigger Bullet",  "desc": "Bullet size +5"},
+            {"name": "Faster Bullet",  "desc": "Bullet speed +2"},
+            {"name": "Extra Bullet",   "desc": "Fire additional bullet"},
+            {"name": "Shorter Cooldown", "desc": "Shoot more frequently"},
+            {"name": "Player Faster", "desc": "+ 0.5 speed"}
     ]
         return random.sample(possible_upgrades, k=num)
     
     def apply_upgrade(self, player, upgrade):
         name = upgrade["name"]
         if name == "Bigger Bullet":
-            player.bullet_size += 5
+            player.bullet_size += 10
         elif name == "Faster Bullet":
-            player.bullet_speed += 2
+            player.bullet_speed += 5
         elif name == "Extra Bullet":
             player.bullet_count += 1
+        elif name == "Player Faster":
+            player.speed += 0.5
         elif name == "Shorter Cooldown":
             player.shoot_cooldown = max(1, int(player.shoot_cooldown * 0.8))
             
@@ -312,5 +375,5 @@ class Game:
 
             # Increase enemy spawns each time we level up
             self.enemies_per_spawn += 1
-            
-            
+
+

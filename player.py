@@ -1,9 +1,10 @@
 import pygame
 import app  # Contains global settings like WIDTH, HEIGHT, PLAYER_SPEED, etc.
 import math
+import app 
  
 from bullet import Bullet
- 
+from enemy import Enemy
 class Player:
     def __init__(self, x, y, assets):
         self.x = x
@@ -29,27 +30,44 @@ class Player:
         self.shoot_cooldown = 70
         self.shoot_timer = 40
         self.bullets = []
+        self.speed = app.PLAYER_SPEED
 
         self.level = 1
+        #dash stuff
+        self.dash_cooldown = 0  # Cooldown timer for dashing
+        self.is_dashing = False  # Whether the player is currently dashing
+        self.dash_duration = 0  # Duration of the dash
+        self.dash_speed = 15  # Speed of the dash
+        self.direction = [0, 0]  # Direction of the dash
     def handle_input(self):
-        # TODO: 1. Capture Keyboard Input
         keys = pygame.key.get_pressed()
- 
-        vel_x, vel_y = 0, 0
- 
-        # TODO: 2. Adjust player position with keys pressed, updating the player position to vel_x and vel_y
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            # Move character Left
-            vel_x -= self.speed
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            vel_x += self.speed
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            vel_y -= self.speed
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            vel_y += self.speed
- 
-        self.x += vel_x
-        self.y += vel_y
+        self.direction = [0, 0]  # Reset direction
+
+        # Check for movement keys
+        if keys[pygame.K_UP] or keys[pygame.K_w]:
+            self.direction[1] = -1  # Move up
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+            self.direction[1] = 1  # Move down
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            self.direction[0] = -1  # Move left
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            self.direction[0] = 1  # Move right
+
+        # Normalize the direction vector to prevent faster diagonal movement
+        if self.direction != [0, 0]:
+            length = (self.direction[0]**2 + self.direction[1]**2)**0.5
+            self.direction[0] /= length
+            self.direction[1] /= length
+
+        # Move the player based on direction and speed
+        self.x += self.direction[0] * self.speed
+        self.y += self.direction[1] * self.speed
+
+        # Clamp player position to screen bounds
+        self.x = max(0, min(self.x, app.WIDTH))
+        self.y = max(0, min(self.y, app.HEIGHT))
+        self.rect.center = (self.x, self.y)
+        
 
         # TODO: 3. Clamp player position to screen bounds
         self.x = max(0, min(self.x, app.WIDTH))
@@ -57,18 +75,19 @@ class Player:
         self.rect.center = (self.x, self.y)
 
         # animation state
-        if vel_x != 0 or vel_y != 0:
+        if self.direction[0] != 0 or self.direction[1] != 0:
             self.state = "run"
         else:
             self.state = "idle"
  
         # direction
-        if vel_x < 0:
+        if self.direction[0] < 0:
             self.facing_left = True
-        elif vel_x > 0:
+        elif self.direction[0] > 0:
             self.facing_left = False
        
     def update(self):
+        self.handle_input()
         for bullet in self.bullets:
             bullet.update()
  
@@ -84,7 +103,23 @@ class Player:
             center = self.rect.center
             self.rect = self.image.get_rect()
             self.rect.center = center
- 
+        # Handle dashing
+        if self.is_dashing:
+            self.x += self.dash_speed * self.direction[0]  # Dash in the current direction
+            self.y += self.dash_speed * self.direction[1]
+            self.dash_duration -= 1
+            if self.dash_duration <= 0:
+                self.is_dashing = False
+
+        # Handle dash cooldown
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
+    def start_dash(self): #dash
+        if not self.is_dashing and self.dash_cooldown == 0:
+            self.is_dashing = True
+            self.dash_duration = 10  # Dash lasts for 10 frames
+            self.dash_cooldown = 300  # Cooldown lasts for 5 seconds (300 frames at 60 FPS)
+   
     def draw(self, surface):
         if self.facing_left:
             flipped_img = pygame.transform.flip(self.image, True, False)
@@ -111,7 +146,7 @@ class Player:
         vx = (dx / dist) * self.bullet_speed
         vy = (dy / dist) * self.bullet_speed
  
-        angle_spread = 5
+        angle_spread = 10
         base_angle = math.atan2(vy, vx)
         mid = (self.bullet_count - 1) / 2
  
@@ -129,13 +164,45 @@ class Player:
  
     def shoot_toward_mouse(self, pos):
         mx, my = pos
-        self.shoot_toward_position(mx, my)
+        dx = mx - self.x
+        dy = my - self.y
+        self.create_bullet(dx, dy)
  
     def shoot_toward_enemy(self, enemy):
-        self.shoot_toward_position(enemy.x, enemy.y)
+        dx = enemy.x - self.x
+        dy = enemy.y - self.y
+        self.create_bullet(dx, dy)
+    
 
     def add_xp(self, amount):
         self.xp += amount
+
+    def create_bullet(self, dx, dy):
+        # Normalize the direction vector
+        length = math.sqrt(dx**2 + dy**2)
+        if length == 0:
+            return
+        dx /= length
+        dy /= length
+
+        # Apply upgrades to bullet properties
+        bullet_speed = self.bullet_speed  # Base speed
+        bullet_size = self.bullet_size  # Base size
+        bullet_damage = 1  # Example: Add damage if needed
+        angle_spread = 10  # Spread angle in degrees
+        mid = (self.bullet_count - 1) / 2  # Center of the spread
+
+        # Create multiple bullets if bullet_count > 1
+        for i in range(self.bullet_count):
+            offset = i - mid
+            spread_radians = math.radians(angle_spread * offset)
+            spread_dx = math.cos(math.atan2(dy, dx) + spread_radians)
+            spread_dy = math.sin(math.atan2(dy, dx) + spread_radians)
+
+            # Create the bullet
+            bullet = Bullet(self.x, self.y, spread_dx * bullet_speed, spread_dy * bullet_speed, bullet_size)
+            self.bullets.append(bullet)
+            print(f"Bullet created at ({self.x}, {self.y}) with velocity ({spread_dx * bullet_speed}, {spread_dy * bullet_speed}) and size {bullet_size}")  # Debug
 
  
 def play_music(self, music_file):
